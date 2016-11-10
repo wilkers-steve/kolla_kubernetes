@@ -1,23 +1,51 @@
-apiVersion: v1
-kind: ReplicationController
+{%- set resourceName = kolla_kubernetes.cli.args.resource_name %}
+{%- import "services/common/common-lib.yml.j2" as lib with context %}
+apiVersion: apps/v1
+kind: PetSet
 spec:
+  serviceName: "heat"
   replicas: {{ heat_engine_replicas }}
-  selector:
-      service: heat
-      type: engine
   template:
     metadata:
       labels:
         service: heat
         type: engine
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+        pod.alpha.kubernetes.io/init-containers: '[
+          {
+            "name": "initialize-heat-engine",
+            "image": "{{ kolla_toolbox_image_full }}",
+            "command": [
+                "sh",
+                "-c",
+                "cp -a /config/..data/* /heat/; "],
+            "volumeMounts": [
+               {
+                 "name": "heat-engine-config",
+                 "mountPath": "/config/"
+               },
+               {
+                 "name": "heat-config",
+                 "mountPath": "/heat/"
+               }
+            ]
+          }
+        ]'
     spec:
+      nodeSelector:
+{%- set selector = kolla_kubernetes_hostlabel_heat_engine |
+                       default(kolla_kubernetes_hostlabel_controller)
+%}
+          {{ selector.key }}: {{ selector.value }}
       containers:
         - name: heat-engine
           image: "{{ heat_engine_image_full }}"
           volumeMounts:
+{{ lib.common_volume_mounts(indent=12) }}
             - mountPath: {{ container_config_directory }}
               name: heat-config
-            - mountPath: /var/log/kolla/
+            - mountPath: /var/log/kolla
               name: kolla-logs
           env:
             - name: KOLLA_CONFIG_STRATEGY
@@ -25,6 +53,7 @@ spec:
           ports:
             - containerPort: {{ heat_engine_port }}
               name: heat-engine
+{{ lib.common_containers(indent=8) }}
       volumes:
         - name: heat-config
           configMap:
@@ -33,3 +62,4 @@ spec:
           emptyDir: {}
 metadata:
    name: heat-engine
+   namespace: {{ kolla_kubernetes_namespace }}
